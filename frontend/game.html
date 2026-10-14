@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Tic-Tac-Toe</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>3 · Voice in your app</h1>
+  <p class="lead">Say <em>"put me in the center"</em> or <em>"top right"</em>, or just click. Voice and mouse input go through the same
+    <code>play()</code> function on the server and both land in the conversation history, so the agent always knows the true board state.</p>
+  <section class="settings" id="settings"></section>
+  <main class="grid">
+    <div class="panel">
+      <h2>You are <span style="color:var(--accent)">X</span> · the agent is <span style="color:var(--warn)">O</span></h2>
+      <div class="board" id="board"></div>
+      <div class="result" id="result"></div>
+      <div class="row" style="justify-content:center;margin-top:8px"><button id="newgame">New game</button></div>
+      <h3>How it works</h3>
+      <ul class="muted" style="margin:0;padding-left:18px">
+        <li>Voice → STT → LLM calls <code>make_move(square)</code> → server updates the board and picks the agent's reply move.</li>
+        <li>Click → <code>action</code> message → the <em>same</em> <code>play()</code> → a note like "[clicked square 5]" is added to the chat history.</li>
+        <li>The server pushes the board to the UI after every change, so both channels stay in sync.</li>
+      </ul>
+    </div>
+    <div class="panel convo" id="convo"></div>
+  </main>
+</div>
+<script type="module">
+  import { renderNav, setupConversation } from "./voice.js";
+  renderNav();
+  const boardEl = document.getElementById("board"), resultEl = document.getElementById("result");
+  let client;
+  function draw(board = Array(9).fill(" "), result = null) {
+    boardEl.innerHTML = board.map((c, i) => `<button class="${c.trim()}" data-i="${i + 1}" ${c !== " " || result ? "disabled" : ""}><span class="n">${i + 1}</span>${c.trim()}</button>`).join("");
+    boardEl.querySelectorAll("button").forEach((b) => (b.onclick = () => client.sendAction({ square: +b.dataset.i })));
+    resultEl.textContent = { X: "You win! 🎉", O: "Agent wins 🤖", draw: "Draw 🤝" }[result] || "";
+  }
+  draw();
+  ({ client } = await setupConversation({
+    mode: "game", panel: document.getElementById("convo"), settingsEl: document.getElementById("settings"),
+    onEvent: (msg) => { if (msg.name === "state") draw(msg.board, msg.result); },
+  }));
+  document.getElementById("newgame").onclick = () => client.sendAction({ new_game: true });
+</script>
+</body>
+</html>

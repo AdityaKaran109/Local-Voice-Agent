@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+openai
+anthropic
+numpy
+soundfile
+faster-whisper
+kokoro-onnx
+python-dotenv

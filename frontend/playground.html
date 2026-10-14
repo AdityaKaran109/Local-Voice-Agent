@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Stack</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>1 · The traditional voice stack</h1>
+  <p class="lead">Speech-to-text → LLM → text-to-speech. Accurate and fully controllable, but every stage adds latency.
+    The LLM stream is cut into sentences so TTS starts before the reply is finished. Swap providers above and watch the numbers.</p>
+  <section class="settings" id="settings"></section>
+  <main class="grid">
+    <div class="panel">
+      <h2>Last turn latency</h2>
+      <div class="bars" id="bars"><span class="muted">Say something to see a breakdown.</span></div>
+      <h3>History</h3>
+      <table id="hist"><tr><th>#</th><th>STT</th><th>LLM</th><th>TTS</th><th>STT ms</th><th>LLM 1st token</th><th>TTS 1st</th><th>1st audio</th></tr></table>
+      <h3>System prompt</h3>
+      <p class="muted" style="margin:0">"You are a friendly voice assistant. Keep replies short and conversational (1-3 sentences). No markdown or lists."
+        — voice UIs need short, list-free replies; long text is slow to speak and hard to follow by ear.</p>
+    </div>
+    <div class="panel convo" id="convo"></div>
+  </main>
+</div>
+<script type="module">
+  import { renderNav, setupConversation } from "./voice.js";
+  renderNav();
+  const bars = document.getElementById("bars"), hist = document.getElementById("hist");
+  let n = 0;
+  const { client } = await setupConversation({
+    mode: "chat", panel: document.getElementById("convo"), settingsEl: document.getElementById("settings"),
+    onMessage: (msg) => {
+      if (msg.type !== "metrics") return;
+      const rows = [
+        ["Speech-to-text", msg.stt_ms], ["LLM first token", msg.llm_first_token_ms], ["TTS first sentence", msg.tts_first_ms],
+        ["→ First audio out", msg.first_audio_ms], ["Turn complete", msg.total_ms]];
+      const max = Math.max(...rows.map((r) => r[1] || 0), 1);
+      bars.innerHTML = rows.map(([l, v], i) => `<div class="bar"><span>${l}</span><div class="track"><div class="fill" style="width:${((v || 0) / max) * 100}%;background:${i === 3 ? "var(--accent2)" : ""}"></div></div><span class="v">${v == null ? "—" : v + " ms"}</span></div>`).join("")
+        + `<p class="muted" style="margin:6px 0 0">"First audio out" ≈ what the user feels: time from end of speech to hearing the reply (excluding ~700 ms VAD end-of-speech wait).</p>`;
+      const c = client.cfg;
+      hist.insertAdjacentHTML("beforeend", `<tr><td>${++n}</td><td>${c.stt}</td><td>${c.llm}</td><td>${c.tts}</td><td>${msg.stt_ms ?? "—"}</td><td>${msg.llm_first_token_ms ?? "—"}</td><td>${msg.tts_first_ms ?? "—"}</td><td><b>${msg.first_audio_ms ?? "—"}</b></td></tr>`);
+    },
+  });
+</script>
+</body>
+</html>

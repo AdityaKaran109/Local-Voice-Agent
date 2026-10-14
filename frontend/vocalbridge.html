@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vocal Bridge</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>Vocal Bridge — the course's platform</h1>
+  <p class="lead">The course builds every lesson on <a href="https://vocalbridgeai.com" target="_blank">Vocal Bridge</a>: a real-time foreground
+    voice agent with a reasoning background agent. Your agent's prompt, voice style (Chatty, Focused, Gemini, Ultravox) and client actions live in
+    the Vocal Bridge dashboard; this page connects to it with the official SDK. Your API key stays on the local server.</p>
+  <div class="panel" id="setup" style="margin-bottom:14px"></div>
+  <main class="grid">
+    <div class="panel">
+      <div class="tabs" id="tabs">
+        <button data-t="game" class="active">Voice in app (client actions)</button>
+        <button data-t="agent">Voice for agent (AI Agent mode)</button>
+        <button data-t="call">Voice as tool (outbound call)</button>
+        <button data-t="evals">Evals (call logs)</button>
+      </div>
+
+      <section data-p="game">
+        <p class="muted" style="margin-top:0">Same tic-tac-toe as lesson 3, wired through Vocal Bridge <b>client actions</b>. The agent sends
+          <code>make_move {square}</code> when you say where to go; clicks and the agent's replies go back as <code>board_update</code>, so voice and mouse share one state.</p>
+        <div class="board" id="board"></div>
+        <div class="result" id="result"></div>
+        <div class="row" style="justify-content:center"><button id="newgame">New game</button></div>
+        <details style="margin-top:10px"><summary>Client actions to add to your agent</summary>
+          <p class="muted">Add these in the dashboard, or with <code>vb config set --client-actions-file data/vocalbridge/client_actions.json</code>
+            (run <code>vb docs</code> to confirm the exact schema for your account). Suggested prompt line: <em>"You are playing tic-tac-toe; the user is X.
+            When they say where to move call make_move with square 1-9 (1 top-left … 9 bottom-right). Narrate board_update events in one short sentence."</em></p>
+        </details>
+      </section>
+
+      <section data-p="agent" hidden>
+        <p class="muted" style="margin-top:0">In <b>AI Agent mode</b>, the Vocal Bridge voice agent delegates domain questions to <em>your</em> agent and speaks
+          the answer, which is the lesson-4 pattern. Here the delegated questions go to the local Velo Bikes RAG agent. Enable AI Agent mode on your
+          Vocal Bridge agent first, e.g. <code>vb config set --ai-agent-enabled true --ai-agent-description "Velo Bikes customer support"</code>.</p>
+        <label><input type="checkbox" id="aiagent" checked> Answer delegated questions with the local support agent, using LLM
+          <select id="aillm"></select></label>
+        <h3>Delegated queries</h3>
+        <div class="log" id="ailog">—</div>
+      </section>
+
+      <section data-p="call" hidden>
+        <p class="muted" style="margin-top:0">The course's <code>make_phone_call</code> tool, run by Vocal Bridge. Requires a paid plan with outbound calling enabled
+          (<code>vb config set --outbound-enabled true --accept-outbound-tos</code>). Only call numbers that have agreed to be called.
+          The <b>5 · Voice as tool</b> page can also use Vocal Bridge as its call mode, so the LLM decides when to place the call.</p>
+        <div class="row"><input id="phone" placeholder="+14155551234"><input id="pname" placeholder="Callee name (optional)"><button class="primary" id="callbtn">Place call</button></div>
+        <div class="log" id="calllog" style="margin-top:10px">—</div>
+      </section>
+
+      <section data-p="evals" hidden>
+        <p class="muted" style="margin-top:0">Vocal Bridge's multimodal evaluator scores a recorded call (0–10) and suggests prompt improvements.
+          Pick a call, set the objective, run the eval. Paid plans only.</p>
+        <div class="row"><button id="refresh">Refresh calls</button></div>
+        <table id="logs" style="margin-top:8px"></table>
+        <div id="logdetail"></div>
+      </section>
+    </div>
+
+    <div class="panel convo">
+      <div class="convo-head"><span class="status" id="status"><i></i><b>disconnected</b></span>
+        <button class="ghost" id="mute" disabled>Mute</button></div>
+      <div class="transcript" id="transcript"></div>
+      <div class="controls"><button class="mic" id="connect">🎙️ <span>Connect to agent</span></button>
+        <span class="muted" id="agentinfo"></span></div>
+    </div>
+  </main>
+</div>
+<script type="module">
+  import { renderNav, Transcript, escapeHtml } from "./voice.js";
+  renderNav();
+  const $ = (id) => document.getElementById(id);
+  const cat = await (await fetch("/api/providers")).json();
+  const transcript = new Transcript($("transcript"));
+  const setState = (s) => { $("status").dataset.state = s; $("status").querySelector("b").textContent = s; };
+  const log = (id, s) => { const l = $(id); l.textContent = (l.textContent === "—" ? "" : l.textContent + "\n") + s; l.scrollTop = l.scrollHeight; };
+  const api = async (url, opts = {}) => {
+    const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j;
+  };
+
+  // tabs
+  document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    document.querySelectorAll("section[data-p]").forEach((s) => (s.hidden = s.dataset.p !== b.dataset.t));
+    if (b.dataset.t === "evals") loadLogs();
+  });
+
+  // setup / agent info
+  if (!cat.vocalbridge.available) {
+    $("setup").innerHTML = `<b>Setup needed:</b> sign up at <a href="https://vocalbridgeai.com" target="_blank">vocalbridgeai.com</a> (the course offers free credits),
+      create an agent, copy its API key, then add <code>VOCAL_BRIDGE_API_KEY=vb_…</code> to <code>.env</code> and restart. With an account-wide key also set
+      <code>VOCAL_BRIDGE_AGENT_ID</code>. Optional CLI: <code>pip install vocal-bridge</code> then <code>vb auth login</code>.`;
+    $("connect").disabled = true;
+  } else {
+    $("setup").innerHTML = `<span class="pill ok">connected to Vocal Bridge API</span> <span class="muted" id="agentmeta">loading agent…</span>`;
+    api("/api/vocalbridge/agent").then((a) => {
+      const meta = [a.name, a.style && `style: ${a.style}`, a.phone_number && `📞 ${a.phone_number}`].filter(Boolean).join(" · ");
+      $("agentmeta").textContent = meta || "agent ready";
+    }).catch((e) => ($("agentmeta").textContent = e.message));
+  }
+  $("aillm").innerHTML = cat.llm.filter((p) => p.available).map((p) => `<option value="${p.id}">${p.label}</option>`).join("");
+
+  // --- tic-tac-toe state, shared by voice (agent actions) and clicks ---
+  const WINS = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const NAMES = ["top left","top middle","top right","middle left","center","middle right","bottom left","bottom middle","bottom right"];
+  let board = Array(9).fill(" ");
+  const winner = (b) => { for (const [a, c, d] of WINS) if (b[a] !== " " && b[a] === b[c] && b[c] === b[d]) return b[a]; return b.includes(" ") ? null : "draw"; };
+  const minimax = (b, p) => {
+    const w = winner(b); if (w) return [{ O: 1, X: -1, draw: 0 }[w], null];
+    let best = [p === "O" ? -2 : 2, null];
+    b.forEach((c, i) => { if (c !== " ") return; b[i] = p; const [s] = minimax(b, p === "O" ? "X" : "O"); b[i] = " ";
+      if ((p === "O" && s > best[0]) || (p === "X" && s < best[0])) best = [s, i]; });
+    return best;
+  };
+  function play(square, source) {
+    const i = square - 1;
+    if (winner(board) || board[i] !== " ") return { error: `square ${square} is not available` };
+    board[i] = "X";
+    const out = { player_move: NAMES[i], source };
+    if (!winner(board)) {
+      const empty = board.map((c, k) => (c === " " ? k : -1)).filter((k) => k >= 0);
+      const j = Math.random() < 0.3 ? empty[Math.floor(Math.random() * empty.length)] : minimax([...board], "O")[1];
+      board[j] = "O"; out.agent_move = NAMES[j];
+    }
+    out.result = { X: "player wins", O: "agent wins", draw: "draw", null: "in progress" }[winner(board)];
+    draw(); return out;
+  }
+  function draw() {
+    const w = winner(board);
+    $("board").innerHTML = board.map((c, i) => `<button class="${c.trim()}" data-i="${i + 1}" ${c !== " " || w ? "disabled" : ""}><span class="n">${i + 1}</span>${c.trim()}</button>`).join("");
+    $("board").querySelectorAll("button").forEach((b) => b.onclick = () => sync(play(+b.dataset.i, "click")));
+    $("result").textContent = { X: "You win! 🎉", O: "Agent wins 🤖", draw: "Draw 🤝" }[w] || "";
+  }
+  draw();
+  $("newgame").onclick = () => { board = Array(9).fill(" "); draw(); sync({ new_game: true, source: "click" }); };
+
+  // --- Vocal Bridge SDK ---
+  let vb;
+  const sync = (update) => { transcript.note(`🎯 <code>board_update ${escapeHtml(JSON.stringify(update))}</code>`, "tool"); vb?.sendAction("board_update", { ...update, board }); };
+
+  $("connect").onclick = async () => {
+    if (vb) { await vb.disconnect(); vb = null; $("connect").classList.remove("on"); $("connect").querySelector("span").textContent = "Connect to agent"; $("mute").disabled = true; return; }
+    $("connect").disabled = true;
+    try {
+      const { VocalBridge } = await import("https://cdn.jsdelivr.net/npm/@vocalbridgeai/sdk@0.1.1/+esm");
+      vb = new VocalBridge({ auth: { tokenUrl: "/api/vocalbridge/token" }, participantName: "Lab user" });
+      vb.on("connectionStateChanged", (s) => setState(s === "connected" ? "listening" : s));
+      vb.on("transcript", ({ role, text }) => transcript.handle({ type: "transcript", role: role === "user" ? "user" : "assistant", text }));
+      vb.on("error", (e) => transcript.note(`⚠️ ${escapeHtml(e.message || String(e))}`, "error"));
+      vb.on("agentAction", ({ action, payload }) => {
+        transcript.note(`🔧 <code>${escapeHtml(`${action}(${JSON.stringify(payload || {})})`)}</code>`, "tool");
+        if (action === "make_move") sync(play(+(payload?.square ?? payload?.position), "voice"));
+        if (action === "new_game") { board = Array(9).fill(" "); draw(); sync({ new_game: true, source: "voice" }); }
+      });
+      vb.onAIAgentQuery(async (query) => {
+        if (!$("aiagent").checked) return "The specialist agent is offline right now.";
+        log("ailog", `→ ${query}`);
+        const { answer } = await api("/api/agent/query", { method: "POST", body: JSON.stringify({ query, llm: $("aillm").value, session: vb.roomName }) });
+        log("ailog", `← ${answer}`);
+        return answer;
+      });
+      await vb.connect();
+      $("connect").classList.add("on"); $("connect").querySelector("span").textContent = "Connected (click to hang up)";
+      $("mute").disabled = false; $("agentinfo").textContent = vb.agentMode ? `mode: ${vb.agentMode}` : "";
+    } catch (e) { transcript.note(`⚠️ ${escapeHtml(e.message)}`, "error"); vb = null; setState("disconnected"); }
+    $("connect").disabled = false;
+  };
+  $("mute").onclick = async () => { await vb?.toggleMicrophone(); $("mute").textContent = vb?.isMicrophoneEnabled ? "Mute" : "Unmute"; };
+
+  // --- outbound call ---
+  $("callbtn").onclick = async () => {
+    const phone = $("phone").value.trim();
+    if (!/^\+[1-9]\d{6,14}$/.test(phone)) return log("calllog", "Use E.164 format, e.g. +14155551234");
+    try { const r = await api("/api/vocalbridge/call", { method: "POST", body: JSON.stringify({ phone_number: phone, participant_name: $("pname").value || undefined }) });
+      log("calllog", `📞 ${r.status || "initiated"} · call ${r.call_id || "?"} → ${r.destination || phone}. The transcript appears under Evals when the call ends.`);
+    } catch (e) { log("calllog", `⚠️ ${e.message}`); }
+  };
+
+  // --- call logs + evals ---
+  async function loadLogs() {
+    if (!cat.vocalbridge.available) { $("logs").innerHTML = `<tr><td class="muted">Add VOCAL_BRIDGE_API_KEY first.</td></tr>`; return; }
+    try {
+      const { sessions = [] } = await api("/api/vocalbridge/logs?limit=20");
+      $("logs").innerHTML = `<tr><th>Started</th><th>Status</th><th>Dir</th><th>Msgs</th></tr>` + sessions.map((s) =>
+        `<tr data-id="${s.id}" style="cursor:pointer"><td>${(s.started_at || "").replace("T", " ").slice(0, 19)}</td><td>${s.status}</td><td>${s.call_direction || "web"}</td><td>${s.message_count ?? ""}</td></tr>`).join("");
+      $("logs").querySelectorAll("tr[data-id]").forEach((tr) => tr.onclick = () => showLog(tr.dataset.id));
+    } catch (e) { $("logs").innerHTML = `<tr><td class="pill bad">${escapeHtml(e.message)}</td></tr>`; }
+  }
+  $("refresh").onclick = loadLogs;
+  async function showLog(id) {
+    const s = await api(`/api/vocalbridge/logs/${id}`);
+    const lines = s.transcript_text || (s.transcript || []).map((m) => `[${m.role}] ${m.content || m.text || ""}`).join("\n");
+    $("logdetail").innerHTML = `<h3>Call ${id.slice(0, 8)}…</h3><div class="log">${escapeHtml(lines || "(no transcript)")}</div>
+      <div class="row" style="margin-top:8px"><input id="obj" placeholder="Objective (e.g. Book a table)" style="flex:1"><button class="primary" id="evalbtn">Run eval</button></div><div id="evalout"></div>`;
+    $("evalbtn").onclick = async () => {
+      $("evalout").innerHTML = `<p class="muted">Scoring… (can take a minute)</p>`;
+      try {
+        const { result: r = {} } = await api(`/api/vocalbridge/logs/${id}/eval`, { method: "POST", body: JSON.stringify({ objective: $("obj").value || undefined }) });
+        const li = (xs, sym) => (xs || []).map((x) => `<li>${sym} ${escapeHtml(x)}</li>`).join("");
+        $("evalout").innerHTML = `<p><b>${r.score ?? "—"}/10</b> · ${escapeHtml(r.verdict || "")}</p><p>${escapeHtml(r.summary || "")}</p>
+          <ul style="padding-left:18px">${li(r.what_worked, "✅")}${li(r.what_didnt, "❌")}</ul>
+          ${r.suggested_prompt_improvements ? `<p><b>Suggested prompt improvements:</b> ${escapeHtml(r.suggested_prompt_improvements)}</p>` : ""}`;
+      } catch (e) { $("evalout").innerHTML = `<p class="pill bad">${escapeHtml(e.message)}</p>`; }
+    };
+  }
+</script>
+</body>
+</html>

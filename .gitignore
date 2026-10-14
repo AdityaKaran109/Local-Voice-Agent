@@ -1,0 +1,9 @@
+.venv/
+.env
+models/
+data/evals/runs/
+__pycache__/
+docs/
+.claude/
+CLAUDE.md
+.DS_Store

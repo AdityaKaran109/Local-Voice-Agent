@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Agent Lab</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>Voice Agent Lab</h1>
+  <p class="lead">A local, provider-agnostic rebuild of DeepLearning.AI's <em>Voice for AI Agents and Applications</em>.
+    Pick a stack in each page's settings bar: <b>Open source</b> (faster-whisper · Ollama · Kokoro, fully offline) or <b>Google Gemini</b>
+    (Gemini STT · Gemini 3.8 Flash · Gemini TTS · Gemini Live). The <b>Vocal Bridge</b> page connects to the platform the course itself uses.</p>
+
+  <div class="cards">
+    <a class="card" href="playground.html"><h3>1 · The voice stack</h3><p>Cascaded STT → LLM → TTS with per-stage latency. Mix and match providers and compare.</p></a>
+    <a class="card" href="realtime.html"><h3>2 · Voice-to-voice</h3><p>Speech-native realtime model over WebRTC — lower latency, less control. Side-by-side trade-offs.</p></a>
+    <a class="card" href="game.html"><h3>3 · Voice in your app</h3><p>Tic-tac-toe where voice commands and mouse clicks share one synchronized state.</p></a>
+    <a class="card" href="agent.html"><h3>4 · Voice for your agent</h3><p>Wrap an existing RAG + tools text agent with voice — unchanged. Plus foreground/background dual-agent mode.</p></a>
+    <a class="card" href="caller.html"><h3>5 · Voice as a tool</h3><p>An assistant with a <code>make_phone_call</code> tool. Simulated calls with live transcript, or real calls via Twilio.</p></a>
+    <a class="card" href="vocalbridge.html"><h3>Vocal Bridge (course platform)</h3><p>The official SDK: client actions, AI Agent mode, outbound calls, and call evals.</p></a>
+    <a class="card" href="evals.html"><h3>6 · Voice AI evals</h3><p>Simulated callers, audio round-trip WER, LLM-as-judge rubrics, latency, and regression tracking.</p></a>
+  </div>
+
+  <h2 style="font-size:16px;margin:26px 0 8px">Providers on this machine</h2>
+  <div class="panel"><table id="prov"><tr><td class="muted">loading…</td></tr></table>
+    <p class="muted" style="margin:10px 0 0">Add API keys to <code>.env</code> and restart the server to unlock cloud providers.</p></div>
+</div>
+<script type="module">
+  import { renderNav } from "./voice.js";
+  renderNav();
+  const cat = await (await fetch("/api/providers")).json();
+  const rows = [];
+  for (const [stage, list] of Object.entries({ "Speech-to-text": cat.stt, "LLM": cat.llm, "Text-to-speech": cat.tts }))
+    list.forEach((p, i) => rows.push(`<tr><td>${i ? "" : stage}</td><td>${p.label}</td>
+      <td><span class="pill ${p.kind === "open-source" ? "oss" : ""}">${p.kind}</span></td>
+      <td>${p.available ? '<span class="pill ok">ready</span>' : `<span class="pill no">${p.reason}</span>`}</td></tr>`));
+  const extra = [["Voice-to-voice", `Gemini Live (${cat.realtime.gemini.model})`, "cloud", cat.realtime.gemini], ["", "OpenAI Realtime (WebRTC)", "cloud", cat.realtime.openai],
+    ["Platform", "Vocal Bridge (course platform)", "cloud", cat.vocalbridge], ["Telephony", "Twilio outbound calls", "cloud", cat.telephony.twilio]];
+  extra.forEach(([s, l, k, p]) => rows.push(`<tr><td>${s}</td><td>${l}</td><td><span class="pill">${k}</span></td><td>${p.available ? '<span class="pill ok">ready</span>' : `<span class="pill no">${p.reason}</span>`}</td></tr>`));
+  document.getElementById("prov").innerHTML = `<tr><th>Stage</th><th>Provider</th><th>Type</th><th>Status</th></tr>` + rows.join("");
+</script>
+</body>
+</html>

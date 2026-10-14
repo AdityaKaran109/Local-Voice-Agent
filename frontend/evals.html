@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Evals</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>6 · Voice AI evals</h1>
+  <p class="lead">Evaluation-driven development for the lesson-4 support agent. A simulated caller plays each scenario; with
+    <em>audio round-trip</em> on, every caller line is synthesized with TTS and transcribed with STT so recognition errors hit the agent
+    like they would on a real call. A judge LLM grades each conversation against its rubric. Edit the prompt, re-run, compare.</p>
+  <section class="settings" id="settings"></section>
+  <main class="grid">
+    <div class="panel">
+      <h2>New run</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label class="muted">Label <input id="label" placeholder="e.g. baseline"></label>
+        <label class="muted">Judge LLM <select id="judge"></select></label>
+        <label><input type="checkbox" id="roundtrip" checked> Audio round-trip (TTS → STT)</label>
+      </div>
+      <details><summary>Agent system prompt (edit to try a variant)</summary><textarea id="prompt" rows="8"></textarea></details>
+      <h3>Scenarios</h3>
+      <div id="scenarios"></div>
+      <div class="row" style="margin-top:10px"><button class="primary" id="run">Run evals</button><span class="muted" id="runstate"></span></div>
+      <h3>Runs</h3>
+      <table id="runs"></table>
+    </div>
+    <div class="panel" style="overflow:auto;max-height:calc(100vh - 230px)">
+      <h2 id="detail-title">Run details</h2>
+      <div id="detail" class="muted">Select or start a run.</div>
+    </div>
+  </main>
+</div>
+<script type="module">
+  import { renderNav, renderSettings, VoiceClient, escapeHtml } from "./voice.js";
+  renderNav();
+  const cfgHolder = new VoiceClient("chat"); // only used to hold/persist provider choices
+  const cat = await renderSettings(document.getElementById("settings"), cfgHolder, { showInput: false });
+  const { scenarios, default_prompt } = await (await fetch("/api/evals/scenarios")).json();
+  document.getElementById("prompt").value = default_prompt;
+  document.getElementById("judge").innerHTML = cat.llm.map((p) => `<option value="${p.id}" ${p.available ? "" : "disabled"}>${p.label}</option>`).join("");
+  // like Vocal Bridge's evaluator, prefer Gemini as the judge when available
+  document.getElementById("judge").value = cat.llm.find((p) => p.id === "gemini" && p.available) ? "gemini" : cfgHolder.cfg.llm;
+  document.getElementById("scenarios").innerHTML = scenarios.map((s) =>
+    `<label style="display:block;margin:3px 0"><input type="checkbox" value="${s.id}" checked> <b>${s.id}</b> <span class="muted">— ${escapeHtml(s.goal)}</span></label>`).join("");
+
+  const pct = (x) => (x == null ? "—" : Math.round(x * 100) + "%");
+  let runs = [], polling;
+  async function loadRuns() {
+    runs = await (await fetch("/api/evals/runs")).json();
+    document.getElementById("runs").innerHTML = `<tr><th>Label</th><th>Agent LLM</th><th>STT/TTS</th><th>Score</th><th>Δ vs prev</th></tr>` +
+      runs.map((r, i) => {
+        const prev = runs.slice(i + 1).find((p) => p.status === "done");
+        const d = r.score != null && prev ? r.score - prev.score : null;
+        const o = r.options || {};
+        return `<tr data-id="${r.id}" style="cursor:pointer"><td>${escapeHtml(r.label)}<br><span class="muted">${r.started}</span></td>
+          <td>${o.llm}</td><td>${o.audio_roundtrip ? `${o.stt} / ${o.tts}` : "text only"}</td>
+          <td>${r.status === "running" ? `${r.done}/${r.total}…` : `<b>${pct(r.score)}</b>`}</td>
+          <td>${d == null ? "" : d < 0 ? `<span class="pill bad">▼ ${pct(-d)} regression</span>` : d > 0 ? `<span class="pill ok">▲ ${pct(d)}</span>` : "="}</td></tr>`;
+      }).join("");
+    document.querySelectorAll("#runs tr[data-id]").forEach((tr) => (tr.onclick = () => showRun(tr.dataset.id)));
+  }
+  async function showRun(id) {
+    const r = await (await fetch(`/api/evals/runs/${id}`)).json();
+    document.getElementById("detail-title").textContent = `${r.label} — ${r.status === "done" ? pct(r.score) : r.status}`;
+    const fm = {};
+    r.results.forEach((x) => (x.failure_modes || []).forEach((f) => (fm[f] = (fm[f] || 0) + 1)));
+    document.getElementById("detail").classList.remove("muted");
+    document.getElementById("detail").innerHTML =
+      (Object.keys(fm).length ? `<p><b>Failure modes:</b> ${Object.entries(fm).map(([k, v]) => `<span class="pill bad">${escapeHtml(k)} ×${v}</span>`).join(" ")}</p>` : "") +
+      r.results.map((x) => `
+        <h3>${x.id} · ${pct(x.score)} · avg agent ${x.avg_agent_ms ?? "—"} ms${x.avg_wer != null ? ` · WER ${pct(x.avg_wer)}` : ""}</h3>
+        ${x.error ? `<p class="pill bad">${escapeHtml(x.error)}</p>` : ""}
+        <table>${(x.criteria || []).map((c) => `<tr><td>${c.pass ? "✅" : "❌"}</td><td>${escapeHtml(c.criterion)}<br><span class="muted">${escapeHtml(c.reason || "")}</span></td></tr>`).join("")}</table>
+        <details><summary>Transcript (${x.turns.length} turns)</summary><div class="log">${x.turns.map((t) =>
+          `CALLER (intended): ${escapeHtml(t.intended)}` + (t.heard != null ? `\nCALLER (STT heard): ${escapeHtml(t.heard)}  [WER ${pct(t.wer)}]` : "") +
+          (t.tools?.length ? `\n  tools: ${t.tools.join(", ")}` : "") + `\nAGENT (${t.agent_ms} ms): ${escapeHtml(t.agent)}`).join("\n\n")}</div></details>`).join("");
+    if (r.status === "running") { clearTimeout(polling); polling = setTimeout(() => { showRun(id); loadRuns(); }, 2000); }
+  }
+  document.getElementById("run").onclick = async () => {
+    const c = cfgHolder.cfg;
+    const prompt = document.getElementById("prompt").value.trim();
+    const body = {
+      label: document.getElementById("label").value || undefined, llm: c.llm, stt: c.stt === "browser" ? "whisper" : c.stt,
+      tts: c.tts === "browser" ? "kokoro" : c.tts, judge_llm: document.getElementById("judge").value,
+      audio_roundtrip: document.getElementById("roundtrip").checked,
+      system_prompt: prompt !== default_prompt.trim() ? prompt : undefined,
+      scenarios: [...document.querySelectorAll("#scenarios input:checked")].map((i) => i.value),
+    };
+    const { id } = await (await fetch("/api/evals/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+    await loadRuns(); showRun(id);
+  };
+  await loadRuns();
+  if (runs[0]) showRun(runs[0].id);
+</script>
+</body>
+</html>

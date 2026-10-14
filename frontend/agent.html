@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice for Agent</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>4 · Voice for your agent</h1>
+  <p class="lead">Velo Bikes' existing <em>text</em> support agent (RAG over a knowledge base + order tools) gets a voice — without touching its
+    prompt, retrieval, or tools. Try: <em>"where's order VB-1042?"</em>, <em>"can I return order VB-2077?"</em>, <em>"how long is the e-bike battery covered?"</em></p>
+  <section class="settings" id="settings"></section>
+  <main class="grid">
+    <div class="panel">
+      <h2>Architecture</h2>
+      <div class="row" style="margin-bottom:10px">
+        <label><input type="radio" name="mode" value="single" checked> Single agent</label>
+        <label><input type="radio" name="mode" value="dual"> Foreground + background (dual-agent)</label>
+      </div>
+      <div class="row" id="fgrow" style="margin-bottom:10px;display:none"><span class="muted">Foreground LLM</span><select id="fgllm"></select></div>
+      <div class="agent-lanes">
+        <div class="lane" id="lane-fg"><b>⚡ Foreground</b><span class="muted">Fast, real-time. Acknowledges instantly and keeps the conversation flowing. Never answers facts.</span></div>
+        <div class="lane" id="lane-bg"><b>🧠 Background</b><span class="muted">The unchanged text agent: RAG + <code>get_order_status</code> + <code>create_return</code>.</span></div>
+      </div>
+      <h3>Tool & retrieval activity</h3>
+      <div class="log" id="log">—</div>
+      <h3>Demo data</h3>
+      <table>
+        <tr><th>Order</th><th>Item</th><th>Status</th></tr>
+        <tr><td>VB-1042</td><td>Velo City</td><td>shipped, UPS, arrives Thursday</td></tr>
+        <tr><td>VB-2077</td><td>Velo Volt</td><td>delivered 12 days ago</td></tr>
+        <tr><td>VB-3150</td><td>Velo Trail</td><td>delivered 45 days ago</td></tr>
+        <tr><td>VB-4001</td><td>Helmet bundle</td><td>processing</td></tr>
+      </table>
+      <p class="muted">Knowledge base: <code>data/kb/*.md</code> (shipping, returns, warranty, products). Agent code: <code>backend/agents/support_agent.py</code>; the whole voice layer is <code>voice_agent.py</code>.</p>
+    </div>
+    <div class="panel convo" id="convo"></div>
+  </main>
+</div>
+<script type="module">
+  import { renderNav, setupConversation } from "./voice.js";
+  renderNav();
+  const log = document.getElementById("log"), fg = document.getElementById("lane-fg"), bg = document.getElementById("lane-bg");
+  const addLog = (s) => { log.textContent = (log.textContent === "—" ? "" : log.textContent + "\n") + s; log.scrollTop = log.scrollHeight; };
+  const { client } = await setupConversation({
+    mode: "agent", panel: document.getElementById("convo"), settingsEl: document.getElementById("settings"),
+    extra: { mode: "single" },
+    onEvent: (msg) => {
+      if (msg.name === "tool_call") { addLog(`${msg.tool}(${JSON.stringify(msg.arguments)})`); bg.classList.add("active"); }
+      if (msg.name === "agent") {
+        if (msg.which === "foreground") { fg.classList.add("active"); addLog("⚡ foreground speaking while background works…"); }
+        if (msg.which === "background" && msg.state === "started") { bg.classList.add("active"); fg.classList.remove("active"); }
+        if (msg.which === "background" && msg.state === "answered") { addLog("🧠 background answered"); }
+      }
+    },
+    onMessage: (msg) => { if (msg.type === "metrics") { setTimeout(() => { fg.classList.remove("active"); bg.classList.remove("active"); }, 400); addLog(`⏱ first audio ${msg.first_audio_ms} ms · total ${msg.total_ms} ms`); } },
+  });
+  const fgSel = document.getElementById("fgllm");
+  fgSel.innerHTML = window.__providers.llm.map((p) => `<option value="${p.id}" ${p.available ? "" : "disabled"}>${p.label}</option>`).join("");
+  fgSel.value = client.cfg.llm === "gemini" && window.__providers.llm.find((p) => p.id === "gemini-lite" && p.available) ? "gemini-lite" : client.cfg.llm;
+  fgSel.onchange = () => client.setExtra({ fg_llm: fgSel.value });
+  document.querySelectorAll('input[name=mode]').forEach((r) => r.onchange = () => {
+    client.setExtra({ mode: r.value, fg_llm: fgSel.value });
+    document.getElementById("fgrow").style.display = r.value === "dual" ? "flex" : "none";
+  });
+</script>
+</body>
+</html>

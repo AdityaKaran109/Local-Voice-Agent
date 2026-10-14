@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice as a Tool</title>
+  <link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="nav"></header>
+<div class="page">
+  <h1>5 · Voice as a tool</h1>
+  <p class="lead">A personal assistant with one extra tool: <code>make_phone_call(phone_number, objective)</code>. The LLM decides when a call
+    is the right move, places it, and the call transcript streams in live. Try: <em>"Book a table for 4 at Luigi's this Friday around 7"</em>
+    or <em>"Call the dentist and get me a cleaning next week"</em>.</p>
+  <section class="settings" id="settings"></section>
+  <main class="grid">
+    <div class="panel">
+      <h2>Call mode</h2>
+      <div class="row" style="margin-bottom:6px">
+        <label><input type="radio" name="cm" value="simulated" checked> Simulated (offline — our agent calls an AI business agent)</label>
+      </div>
+      <div class="row" style="margin-bottom:6px">
+        <label><input type="radio" name="cm" value="vocalbridge" id="cm-vb"> Real phone call via Vocal Bridge (course platform)</label>
+        <span class="muted" id="vb-reason"></span>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <label><input type="radio" name="cm" value="twilio" id="cm-twilio"> Real phone call via Twilio</label>
+        <span class="muted" id="twilio-reason"></span>
+      </div>
+      <h3>Call status</h3>
+      <div id="callstatus" class="log">No call yet.</div>
+      <h3>Demo directory</h3>
+      <table>
+        <tr><th>Business</th><th>Number</th><th>Behaviour</th></tr>
+        <tr><td>Luigi's Trattoria</td><td>+1-555-0100</td><td>Fri 7pm full; 6:30 & 8:15 free</td></tr>
+        <tr><td>Bright Smile Dental</td><td>+1-555-0142</td><td>Wed 10am, Thu 3:30pm open</td></tr>
+        <tr><td>Velo Bikes support</td><td>+1-555-0199</td><td>the lesson-4 RAG agent, reused</td></tr>
+      </table>
+      <p class="muted">Both sides of a simulated call are LLM agents voiced with different voices of the selected TTS.
+        With Vocal Bridge, your Vocal Bridge agent places and holds the call (the objective is passed as session metadata) and the transcript is read back from its call logs.
+        Twilio calls use Twilio's speech recognition + &lt;Say&gt; with our LLM deciding what to say; they need <code>TWILIO_*</code> and a public <code>PUBLIC_URL</code> (e.g. ngrok) in <code>.env</code>.</p>
+    </div>
+    <div class="panel convo" id="convo"></div>
+  </main>
+</div>
+<script type="module">
+  import { renderNav, setupConversation, escapeHtml } from "./voice.js";
+  renderNav();
+  const status = document.getElementById("callstatus");
+  const { client, transcript } = await setupConversation({
+    mode: "caller", panel: document.getElementById("convo"), settingsEl: document.getElementById("settings"),
+    extra: { call_mode: "simulated" },
+    onEvent: (msg, { transcript }) => {
+      if (msg.name !== "call") return;
+      const line = { ringing: `📞 Dialing ${msg.number} (${msg.callee}) — ${msg.mode}`, connected: "🟢 Connected", ended: "🔴 Call ended", summary: `📝 ${msg.summary.replace(/\*\*/g, "")}` }[msg.state];
+      if (!line) return;
+      status.textContent = (status.textContent === "No call yet." ? "" : status.textContent + "\n") + line;
+      transcript.note(escapeHtml(line), "call");
+    },
+  });
+  const tw = window.__providers.telephony.twilio;
+  const vbp = window.__providers.telephony.vocalbridge;
+  if (!vbp.available) { document.getElementById("cm-vb").disabled = true; document.getElementById("vb-reason").textContent = `(${vbp.reason})`; }
+  if (!tw.available) { document.getElementById("cm-twilio").disabled = true; document.getElementById("twilio-reason").textContent = `(${tw.reason})`; }
+  document.querySelectorAll('input[name=cm]').forEach((r) => r.onchange = () => client.setExtra({ call_mode: r.value }));
+</script>
+</body>
+</html>

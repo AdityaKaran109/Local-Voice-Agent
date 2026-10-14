@@ -1,0 +1,17 @@
+[
+  {
+    "name": "make_move",
+    "description": "Place the user's X on the tic-tac-toe board. payload: {\"square\": 1-9}, 1 = top-left, 5 = center, 9 = bottom-right.",
+    "direction": "agent_to_app"
+  },
+  {
+    "name": "new_game",
+    "description": "Clear the board and start a new tic-tac-toe game.",
+    "direction": "agent_to_app"
+  },
+  {
+    "name": "board_update",
+    "description": "Sent by the app after every move (voice or click): {board, player_move, agent_move, result, source}. Briefly tell the user where the agent (O) moved and react if the game ended.",
+    "direction": "app_to_agent"
+  }
+]
